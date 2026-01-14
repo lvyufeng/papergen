@@ -73,13 +73,17 @@ class ClaudeClient:
         try:
             self.logger.debug(f"API call: model={self.model}, max_tokens={max_tokens}, temp={temperature}, prompt_length={len(prompt)}")
 
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system if system else "",
-                messages=messages
-            )
+            # Build API call parameters (only include system if provided)
+            api_params = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": messages
+            }
+            if system:
+                api_params["system"] = system
+
+            response = self.client.messages.create(**api_params)
 
             # Extract text from response
             result = response.content[0].text
@@ -141,13 +145,17 @@ class ClaudeClient:
 
         # Call Claude API with streaming
         try:
-            with self.client.messages.stream(
-                model=self.model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system if system else "",
-                messages=messages
-            ) as stream:
+            # Build API call parameters (only include system if provided)
+            api_params = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": messages
+            }
+            if system:
+                api_params["system"] = system
+
+            with self.client.messages.stream(**api_params) as stream:
                 for text in stream.text_stream:
                     yield text
 
