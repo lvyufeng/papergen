@@ -81,7 +81,11 @@ class ClaudeClient:
                 "messages": messages
             }
             if system:
-                api_params["system"] = system
+                # Use array format for third-party provider compatibility
+                if self.base_url:
+                    api_params["system"] = [{"type": "text", "text": system}]
+                else:
+                    api_params["system"] = system
 
             response = self.client.messages.create(**api_params)
 
@@ -153,7 +157,11 @@ class ClaudeClient:
                 "messages": messages
             }
             if system:
-                api_params["system"] = system
+                # Use array format for third-party provider compatibility
+                if self.base_url:
+                    api_params["system"] = [{"type": "text", "text": system}]
+                else:
+                    api_params["system"] = system
 
             with self.client.messages.stream(**api_params) as stream:
                 for text in stream.text_stream:
