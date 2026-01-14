@@ -128,17 +128,23 @@ def _display_paper_analysis(results: dict):
 @app.command("brainstorm")
 def brainstorm_ideas(
     topic: str = typer.Argument(..., help="Research topic"),
-    num_ideas: int = typer.Option(5, "--num", "-n", help="Number of ideas"),
-    context_file: Optional[Path] = typer.Option(None, "--context", "-c", help="Context JSON from survey")
+    num_ideas: int = typer.Option(5, "--num", "-n", help="Number of ideas per LLM"),
+    context_file: Optional[Path] = typer.Option(None, "--context", "-c", help="Context JSON from survey"),
+    multi_llm: bool = typer.Option(False, "--multi", "-m", help="Use multiple LLMs"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory for reports")
 ):
     """Generate novel research ideas through AI brainstorming."""
     from ..discovery.brainstorm import IdeaGenerator
     import json
 
     console.print(f"\n[bold magenta]Brainstorming Research Ideas[/bold magenta]")
-    console.print(f"Topic: {topic}\n")
+    console.print(f"Topic: {topic}")
+    if multi_llm:
+        console.print("[cyan]Mode: Multi-LLM (parallel generation)[/cyan]\n")
+    else:
+        console.print("[cyan]Mode: Single LLM[/cyan]\n")
 
-    generator = IdeaGenerator()
+    generator = IdeaGenerator(use_multi_llm=multi_llm)
 
     # Load context if provided
     if context_file and context_file.exists():
@@ -156,7 +162,11 @@ def brainstorm_ideas(
     with console.status(f"Generating {num_ideas} research ideas..."):
         ideas = generator.generate_ideas(num_ideas)
 
-    _display_ideas(ideas)
+    # Handle multi-LLM output
+    if multi_llm:
+        _display_multi_llm_results(generator, output)
+    else:
+        _display_ideas(ideas)
 
 
 def _display_ideas(ideas: list):
@@ -183,3 +193,66 @@ def _display_ideas(ideas: list):
                 console.print("  [blue]First Steps:[/blue]")
                 for step in idea["first_steps"][:3]:
                     console.print(f"    - {step}")
+
+
+def _display_multi_llm_results(generator, output: Optional[Path]):
+    """Display results from multi-LLM brainstorming."""
+    import json
+
+    # Display summary first
+    summary = generator.get_summary()
+    console.print(Panel("[bold green]Summarized Results[/bold green]"))
+
+    if summary.get("summary"):
+        console.print(f"\n[cyan]Summary:[/cyan] {summary['summary']}")
+
+    # Display top recommendations
+    if summary.get("top_recommendations"):
+        console.print("\n[bold yellow]Top Recommendations:[/bold yellow]")
+        for idea in summary["top_recommendations"][:5]:
+            if isinstance(idea, dict):
+                console.print(f"  - {idea.get('title', idea)}")
+            else:
+                console.print(f"  - {idea}")
+
+    # Display consensus themes
+    if summary.get("consensus_themes"):
+        console.print("\n[bold magenta]Consensus Themes:[/bold magenta]")
+        for theme in summary["consensus_themes"]:
+            console.print(f"  - {theme}")
+
+    # Display individual LLM reports
+    reports = generator.get_reports()
+    console.print(f"\n[bold]Individual Reports ({len(reports)} LLMs):[/bold]")
+
+    for report in reports:
+        console.print(f"\n[cyan]{report.provider}/{report.model}:[/cyan]")
+        console.print(f"  Ideas: {len(report.ideas)}")
+
+    # Save reports if output specified
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+        _save_reports(generator, output)
+
+
+def _save_reports(generator, output_dir: Path):
+    """Save individual LLM reports and summary."""
+    import json
+
+    # Save summary
+    summary_path = output_dir / "summary.json"
+    with open(summary_path, 'w') as f:
+        json.dump(generator.get_summary(), f, indent=2, ensure_ascii=False)
+    console.print(f"\n[green]Summary saved to {summary_path}[/green]")
+
+    # Save individual reports
+    for report in generator.get_reports():
+        report_path = output_dir / f"{report.provider}_{report.model}.json"
+        report_data = {
+            "provider": report.provider,
+            "model": report.model,
+            "ideas": report.ideas
+        }
+        with open(report_path, 'w') as f:
+            json.dump(report_data, f, indent=2, ensure_ascii=False)
+        console.print(f"[green]Report saved to {report_path}[/green]")

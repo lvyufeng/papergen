@@ -1,21 +1,39 @@
-"""Brainstorm module for generating novel research ideas."""
+"""Brainstorm module for generating novel research ideas using multiple LLMs."""
 
 from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 import json
 
 from ..ai.claude_client import ClaudeClient
+from ..ai.multi_llm import MultiLLMManager, LLMConfig, LLMResponse
 from ..core.logging_config import get_logger
 
 
-class IdeaGenerator:
-    """Generates and evaluates novel research ideas."""
+@dataclass
+class BrainstormReport:
+    """Report from a single LLM's brainstorming."""
+    provider: str
+    model: str
+    ideas: List[Dict[str, Any]]
+    raw_response: str
 
-    def __init__(self):
+
+class IdeaGenerator:
+    """Generates and evaluates novel research ideas using multiple LLMs."""
+
+    def __init__(self, use_multi_llm: bool = False):
         """Initialize idea generator."""
         self.logger = get_logger()
+        self.use_multi_llm = use_multi_llm
         self.client = ClaudeClient()
+        self.multi_llm: Optional[MultiLLMManager] = None
         self.ideas: List[Dict[str, Any]] = []
         self.context: Dict[str, Any] = {}
+        self.reports: List[BrainstormReport] = []
+        self.summary: Dict[str, Any] = {}
+
+        if use_multi_llm:
+            self.multi_llm = MultiLLMManager.from_env()
 
     def set_context(
         self,
@@ -37,25 +55,15 @@ class IdeaGenerator:
         Generate novel research ideas based on context.
 
         Args:
-            num_ideas: Number of ideas to generate
+            num_ideas: Number of ideas to generate per LLM
 
         Returns:
             List of research ideas with details
         """
-        self.logger.info(f"Generating {num_ideas} research ideas")
-
-        prompt = self._build_brainstorm_prompt(num_ideas)
-        system = self._get_brainstorm_system()
-
-        response = self.client.generate(
-            prompt=prompt,
-            system=system,
-            max_tokens=8000,
-            temperature=0.8  # Higher for creativity
-        )
-
-        self.ideas = self._parse_ideas(response)
-        return self.ideas
+        if self.use_multi_llm and self.multi_llm:
+            return self._generate_multi_llm(num_ideas)
+        else:
+            return self._generate_single_llm(num_ideas)
 
     def _get_brainstorm_system(self) -> str:
         """Get system prompt for brainstorming."""
@@ -142,3 +150,107 @@ Provide evaluation:
             temperature=0.3
         )
         return {"idea": idea, "evaluation": response}
+
+    def _generate_single_llm(self, num_ideas: int) -> List[Dict[str, Any]]:
+        """Generate ideas using single LLM."""
+        self.logger.info(f"Generating {num_ideas} ideas with single LLM")
+
+        prompt = self._build_brainstorm_prompt(num_ideas)
+        system = self._get_brainstorm_system()
+
+        response = self.client.generate(
+            prompt=prompt,
+            system=system,
+            max_tokens=8000,
+            temperature=0.8
+        )
+
+        self.ideas = self._parse_ideas(response)
+        return self.ideas
+
+    def _generate_multi_llm(self, num_ideas: int) -> List[Dict[str, Any]]:
+        """Generate ideas using multiple LLMs in parallel."""
+        self.logger.info(f"Generating ideas with multiple LLMs")
+
+        prompt = self._build_brainstorm_prompt(num_ideas)
+        system = self._get_brainstorm_system()
+
+        # Generate from all LLMs
+        responses = self.multi_llm.generate_parallel(
+            prompt=prompt,
+            system=system,
+            max_tokens=8000,
+            temperature=0.8
+        )
+
+        # Process each response
+        self.reports = []
+        all_ideas = []
+
+        for resp in responses:
+            if resp.success:
+                ideas = self._parse_ideas(resp.content)
+                report = BrainstormReport(
+                    provider=resp.provider,
+                    model=resp.model,
+                    ideas=ideas,
+                    raw_response=resp.content
+                )
+                self.reports.append(report)
+                all_ideas.extend(ideas)
+
+        # Summarize all ideas
+        self.summary = self._summarize_ideas(all_ideas)
+        self.ideas = self.summary.get("unique_ideas", all_ideas)
+
+        return self.ideas
+
+    def _summarize_ideas(self, all_ideas: List[Dict]) -> Dict[str, Any]:
+        """Summarize and deduplicate ideas from multiple LLMs."""
+        if not all_ideas:
+            return {"unique_ideas": [], "summary": "No ideas generated"}
+
+        # Build summary prompt
+        ideas_text = json.dumps(all_ideas, indent=2, ensure_ascii=False)
+        prompt = f"""Analyze these research ideas from multiple AI models:
+
+{ideas_text}
+
+Tasks:
+1. Identify unique ideas (remove duplicates/similar ones)
+2. Rank by novelty and feasibility
+3. Highlight consensus ideas (mentioned by multiple models)
+4. Note unique perspectives from each model
+
+Output JSON:
+{{
+    "unique_ideas": [...],
+    "consensus_themes": [...],
+    "top_recommendations": [...],
+    "summary": "Brief analysis"
+}}"""
+
+        response = self.client.generate(
+            prompt=prompt,
+            system="You are a research advisor summarizing ideas.",
+            max_tokens=8000,
+            temperature=0.3
+        )
+
+        try:
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            pass
+
+        return {"unique_ideas": all_ideas, "summary": response}
+
+    def get_reports(self) -> List[BrainstormReport]:
+        """Get individual reports from each LLM."""
+        return self.reports
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Get the summarized ideas."""
+        return self.summary

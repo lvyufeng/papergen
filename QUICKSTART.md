@@ -127,6 +127,7 @@ papergen format compile --open           # Create and open PDF
 papergen discover survey paper.pdf -t "NLP"   # Analyze survey paper
 papergen discover paper paper.pdf             # Deep analyze a paper
 papergen discover brainstorm "topic" -n 5     # Generate research ideas
+papergen discover brainstorm "topic" -m       # Multi-LLM brainstorming
 ```
 
 ---
@@ -180,6 +181,22 @@ papergen discover brainstorm "LLM efficiency" -n 5 -c landscape.json
 
 # Step 6: Pick the best idea and start writing!
 papergen init "Your Novel Idea Title" --template acl
+```
+
+### Multi-LLM Brainstorming (Recommended)
+```bash
+# Set up multiple API keys
+export ANTHROPIC_API_KEY='your-claude-key'
+export OPENAI_API_KEY='your-openai-key'
+export GEMINI_API_KEY='your-gemini-key'
+
+# Run multi-LLM brainstorming
+papergen discover brainstorm "topic" -m -n 5 -o ./brainstorm_results
+
+# This will:
+# 1. Generate ideas from all configured LLMs in parallel
+# 2. Summarize and deduplicate ideas using Claude
+# 3. Save individual reports and summary to output directory
 ```
 
 ---
