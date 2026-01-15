@@ -10,6 +10,7 @@ from rich.live import Live
 
 from .session import Session
 from .tools.base import BaseTool, ToolSafety, ToolResult
+from .input_handler import InputHandler
 
 
 class PaperGenREPL:
@@ -19,6 +20,7 @@ class PaperGenREPL:
         """Initialize REPL."""
         self.console = Console()
         self.session = Session()
+        self.input_handler = InputHandler()
         self.tools: Dict[str, BaseTool] = {}
         self.running = False
         self.provider = "anthropic"
@@ -126,16 +128,17 @@ Be concise and helpful. Focus on research tasks."""
     def run(self):
         """Run the interactive REPL."""
         self._load_default_tools()
+        self.input_handler.initialize()
         self.running = True
 
         self.console.print(Panel(
             "[bold cyan]PaperGen[/bold cyan] - AI Research Assistant",
-            subtitle="Type /help for commands"
+            subtitle="Type /help for commands | Tab for completion | Up/Down for history"
         ))
 
         while self.running:
             try:
-                user_input = input("\n[You] > ").strip()
+                user_input = self.input_handler.prompt("\nYou > ").strip()
                 if not user_input:
                     continue
 

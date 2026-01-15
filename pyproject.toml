@@ -24,6 +24,7 @@ dependencies = [
     "rich>=13.0.0",
     "anthropic>=0.18.0",
     "openai>=1.0.0",
+    "prompt-toolkit>=3.0.0",
     "pypdf2>=3.0.0",
     "pdfplumber>=0.10.0",
     "pylatex>=1.4.0",
