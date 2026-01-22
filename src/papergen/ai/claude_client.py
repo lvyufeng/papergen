@@ -5,6 +5,7 @@ import anthropic
 import httpx
 import requests
 import json
+import time
 
 from ..core.config import config
 from ..core.logging_config import get_logger, log_api_call, log_error
@@ -151,42 +152,67 @@ class ClaudeClient:
         if system:
             payload["system"] = system
 
-        # Make HTTP request using requests library with a fresh session
-        # to avoid connection pooling issues with some proxies
-        session = requests.Session()
-        try:
-            response = session.post(
-                f"{self.base_url}/v1/messages",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Connection": "close"  # Force connection close
-                },
-                json=payload,
-                timeout=120.0
-            )
+        # Retry logic for flaky proxies
+        max_retries = 3
+        retry_delay = 1.0  # Start with 1 second
 
-            response.raise_for_status()
-            data = response.json()
+        for attempt in range(max_retries):
+            session = requests.Session()
+            try:
+                response = session.post(
+                    f"{self.base_url}/v1/messages",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "Connection": "close"  # Force connection close
+                    },
+                    json=payload,
+                    timeout=120.0
+                )
 
-            # Extract text from response
-            result = data["content"][0]["text"]
-            input_tokens = data["usage"]["input_tokens"]
-            output_tokens = data["usage"]["output_tokens"]
+                response.raise_for_status()
+                data = response.json()
 
-            log_api_call(
-                endpoint="messages.create",
-                model=self.model,
-                tokens=input_tokens + output_tokens,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                max_tokens=max_tokens
-            )
+                # Extract text from response
+                result = data["content"][0]["text"]
+                input_tokens = data["usage"]["input_tokens"]
+                output_tokens = data["usage"]["output_tokens"]
 
-            return result
-        finally:
-            session.close()
+                log_api_call(
+                    endpoint="messages.create",
+                    model=self.model,
+                    tokens=input_tokens + output_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    max_tokens=max_tokens
+                )
+
+                return result
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                session.close()
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s: {e}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    self.logger.error(f"Request failed after {max_retries} attempts: {e}")
+                    raise
+            except requests.exceptions.HTTPError as e:
+                session.close()
+                # Don't retry on HTTP errors like 502, 4xx
+                if e.response.status_code == 502 and attempt < max_retries - 1:
+                    self.logger.warning(f"502 Bad Gateway (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    raise
+            except Exception as e:
+                session.close()
+                raise
+            finally:
+                session.close()
 
     def stream_generate(
         self,
@@ -292,33 +318,49 @@ class ClaudeClient:
         try:
             # Make a minimal API call to test
             if self.use_direct_http:
-                session = requests.Session()
-                try:
-                    response = session.post(
-                        f"{self.base_url}/v1/messages",
-                        headers={
-                            "Content-Type": "application/json",
-                            "x-api-key": self.api_key,
-                            "anthropic-version": "2023-06-01",
-                            "Connection": "close"
-                        },
-                        json={
-                            "model": self.model,
-                            "max_tokens": 10,
-                            "messages": [{"role": "user", "content": "Hi"}]
-                        },
-                        timeout=30.0
-                    )
-                    response.raise_for_status()
-                finally:
-                    session.close()
+                max_retries = 2
+                retry_delay = 1.0
+
+                for attempt in range(max_retries):
+                    session = requests.Session()
+                    try:
+                        response = session.post(
+                            f"{self.base_url}/v1/messages",
+                            headers={
+                                "Content-Type": "application/json",
+                                "x-api-key": self.api_key,
+                                "anthropic-version": "2023-06-01",
+                                "Connection": "close"
+                            },
+                            json={
+                                "model": self.model,
+                                "max_tokens": 10,
+                                "messages": [{"role": "user", "content": "Hi"}]
+                            },
+                            timeout=30.0
+                        )
+                        response.raise_for_status()
+                        session.close()
+                        return True
+                    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+                        session.close()
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                        else:
+                            self.logger.error(f"API key validation failed: {type(e).__name__}: {str(e)}")
+                            return False
+                    except Exception as e:
+                        session.close()
+                        self.logger.error(f"API key validation failed: {type(e).__name__}: {str(e)}")
+                        return False
             else:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=10,
                     messages=[{"role": "user", "content": "Hi"}]
                 )
-            return True
+                return True
         except Exception as e:
             self.logger.error(f"API key validation failed: {type(e).__name__}: {str(e)}")
             return False
